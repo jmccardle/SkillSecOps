@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.env
+*.egg-info/
+dist/
+build/
+
+# Untrusted skill cache (downloaded but not yet reviewed)
+cache/untrusted/
+
+# Signed output artifacts
+output/
+
+# Secret keys (public keys ARE committed)
+*.key
+!*.pub
