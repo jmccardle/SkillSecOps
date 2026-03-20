@@ -38,6 +38,7 @@ class ChunkSummary(BaseModel):
     summary: str
     declared_tools: list[str] = Field(default_factory=list)
     declared_capabilities: list[str] = Field(default_factory=list)
+    instructions_to_agent: list[str] = Field(default_factory=list)
     schema_violation: bool = False
     raw_response_tokens: int = 0
 
