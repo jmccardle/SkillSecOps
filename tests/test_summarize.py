@@ -266,7 +266,8 @@ class TestSummarizeWithMockLLM:
         assert result.verdict == AnalysisVerdict.FAIL
         assert any("schema_violation" in f for f in result.flags)
 
-    def test_instructions_to_agent_fails(self, tmp_skill_dir):
+    def test_instructions_to_agent_flagged_but_passes(self, tmp_skill_dir):
+        """instructions_to_agent is a flag for Layer 3, not a Layer 2 failure."""
         skill_dir = tmp_skill_dir(SUBTLE_ROLE_SHIFT.content)
         client = MockOpenAIClient(responses=[
             make_inspector_response(
@@ -278,7 +279,9 @@ class TestSummarizeWithMockLLM:
 
         result = summarize_skill(skill_dir, client=client, num_passes=1)
 
-        assert result.verdict == AnalysisVerdict.FAIL
+        # Layer 2 passes — it's a decompiler, not a judge
+        assert result.verdict == AnalysisVerdict.PASS
+        # But the flag is recorded for Layer 3
         assert any("instructions_to_agent" in f for f in result.flags)
 
     def test_no_skill_md_raises(self, tmp_path):

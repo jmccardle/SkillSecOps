@@ -166,15 +166,25 @@ def _find_undeclared_capabilities(
     mismatches: list[str] = []
     desc_lower = declared_description.lower()
 
-    # Check tools referenced in summaries vs declared tools
+    # Check tools referenced in summaries vs declared tools.
+    # Only flag SECURITY-SENSITIVE tools — network access, shell execution,
+    # credential access tools. Implementation libraries (pandas, openpyxl)
+    # are not security-relevant even if undeclared.
+    _SECURITY_SENSITIVE_TOOLS = {
+        "send_http", "curl", "wget", "requests", "fetch", "urllib",
+        "execute_code", "eval", "exec", "subprocess", "os.system",
+        "get_env_variable", "os.environ",
+        "write_file", "open", "shutil",
+    }
+
     summary_tools: set[str] = set()
     for chunk in summaries:
         summary_tools.update(t.lower() for t in chunk.declared_tools)
 
-    undeclared_tools = summary_tools - declared_tools
-    if undeclared_tools:
+    undeclared_sensitive = (summary_tools - declared_tools) & _SECURITY_SENSITIVE_TOOLS
+    if undeclared_sensitive:
         mismatches.append(
-            f"Tools referenced in content but not declared: {undeclared_tools}"
+            f"Security-sensitive tools referenced but not declared: {undeclared_sensitive}"
         )
 
     # Check security-relevant capabilities in summaries vs description
@@ -197,13 +207,30 @@ def _find_undeclared_capabilities(
                 f"but description does not cover this"
             )
 
-    # Check for instructions_to_agent (should always be empty for benign skills)
+    # Check for instructions_to_agent that go BEYOND the declared scope.
+    # A skill about spreadsheets legitimately contains instructions like
+    # "use Excel formulas" — these are consistent with its purpose.
+    # Only flag instructions that reference security-relevant actions
+    # not covered by the description.
+    _SUSPICIOUS_INSTRUCTION_KEYWORDS = {
+        "ignore", "override", "disregard", "forget",  # prompt injection
+        "api_key", "api key", "secret", "password", "credential", "token",  # credential access
+        "exfiltrate", "send to", "phone home", "report to",  # data exfiltration
+        ".env", "environment variable",  # credential file access
+    }
+
     for chunk in summaries:
-        if chunk.instructions_to_agent:
-            mismatches.append(
-                f"Chunk {chunk.chunk_index} contains agent instructions: "
-                f"{chunk.instructions_to_agent}"
-            )
+        for instruction in chunk.instructions_to_agent:
+            instruction_lower = instruction.lower()
+            suspicious_matches = [
+                kw for kw in _SUSPICIOUS_INSTRUCTION_KEYWORDS
+                if kw in instruction_lower
+            ]
+            if suspicious_matches:
+                mismatches.append(
+                    f"Chunk {chunk.chunk_index} contains suspicious instruction "
+                    f"(matches: {suspicious_matches}): {instruction}"
+                )
 
     return mismatches
 

@@ -173,6 +173,14 @@ def _call_inspector(
     )
     flags.extend(validation_flags)
 
+    # Decontaminate Claude Code system context artifacts if present
+    if parsed is not None:
+        try:
+            from skillsecops.llm import decontaminate_inspector_response
+            parsed = decontaminate_inspector_response(parsed)
+        except ImportError:
+            pass  # Not using Claude backend — no decontamination needed
+
     return parsed, flags, completion_tokens
 
 
@@ -411,13 +419,17 @@ def summarize_skill(
     all_flags.extend(cross_flags)
 
     # Determine verdict
-    has_schema_violation = any(c.schema_violation for p in pass_results for c in p)
-    has_instructions = any(
-        c.instructions_to_agent for p in pass_results for c in p
+    # Schema violations in ALL chunks = FAIL (the model couldn't parse anything)
+    # Schema violations in SOME chunks = PASS with flags (partial success is fine)
+    # instructions_to_agent = flag only (Layer 3 decides if they're legitimate)
+    # Cross-pass divergence = flag only (may indicate boundary-sensitive content)
+    total_chunks_across_passes = sum(len(p) for p in pass_results)
+    schema_violation_count = sum(
+        1 for p in pass_results for c in p if c.schema_violation
     )
-    has_cross_divergence = bool(cross_flags)
+    all_violated = schema_violation_count == total_chunks_across_passes
 
-    if has_schema_violation or has_instructions or has_cross_divergence:
+    if all_violated and total_chunks_across_passes > 0:
         verdict = AnalysisVerdict.FAIL
     else:
         verdict = AnalysisVerdict.PASS

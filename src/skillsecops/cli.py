@@ -55,8 +55,15 @@ def main(argv: list[str] | None = None) -> None:
     # --- analyze ---
     p_analyze = subparsers.add_parser("analyze", help="Run full analysis pipeline")
     p_analyze.add_argument("skill_dir", help="Path to skill directory")
-    p_analyze.add_argument("--model", default="gpt-4o-mini", help="LLM model")
+    p_analyze.add_argument(
+        "--model", default="sonnet",
+        help="LLM model: sonnet (fast/cheap), opus (thorough), haiku (fastest)"
+    )
     p_analyze.add_argument("--passes", type=int, default=2, help="Summarization passes")
+    p_analyze.add_argument(
+        "--backend", default="claude", choices=["claude", "openai"],
+        help="LLM backend: claude (subscription via CLI) or openai (API key)"
+    )
 
     # --- sign ---
     p_sign = subparsers.add_parser("sign", help="Sign a reviewed skill")
@@ -177,6 +184,17 @@ def cmd_fetch(args: argparse.Namespace) -> None:
         print("\nStatic analysis passed.", file=sys.stderr)
 
 
+def _make_client(args: argparse.Namespace):
+    """Create LLM client based on --backend flag."""
+    backend = getattr(args, "backend", "claude")
+    if backend == "claude":
+        from skillsecops.llm import ClaudeClient
+        return ClaudeClient(default_model=args.model)
+    else:
+        import openai
+        return openai.OpenAI()
+
+
 def cmd_analyze(args: argparse.Namespace) -> None:
     """Run the full analysis pipeline (layers 1-4)."""
     from skillsecops.analyze.crossref import crossref_skill
@@ -196,7 +214,7 @@ def cmd_analyze(args: argparse.Namespace) -> None:
         content_sha256="",
     )
 
-    # Layer 1: Static
+    # Layer 1: Static (no LLM)
     print("Layer 1: Static analysis...", file=sys.stderr)
     report.static = analyze_skill(skill_dir)
     print(f"  Verdict: {report.static.verdict.value}", file=sys.stderr)
@@ -207,12 +225,19 @@ def cmd_analyze(args: argparse.Namespace) -> None:
         print()
         sys.exit(1)
 
+    # Build LLM client for layers 2-4
+    client = _make_client(args)
+    print(f"  LLM backend: {args.backend} (model: {args.model})", file=sys.stderr)
+
     # Layer 2: Summarization
     print(f"Layer 2: Chunked summarization ({args.passes} passes)...", file=sys.stderr)
     report.summarization = summarize_skill(
-        skill_dir, model=args.model, num_passes=args.passes
+        skill_dir, client=client, model=args.model, num_passes=args.passes
     )
     print(f"  Verdict: {report.summarization.verdict.value}", file=sys.stderr)
+    if report.summarization.flags:
+        for flag in report.summarization.flags:
+            print(f"    Flag: {flag}", file=sys.stderr)
 
     if report.summarization.verdict == AnalysisVerdict.FAIL:
         print("  Short-circuiting: summarization failed.", file=sys.stderr)
@@ -220,10 +245,13 @@ def cmd_analyze(args: argparse.Namespace) -> None:
         print()
         sys.exit(1)
 
-    # Layer 3: Cross-reference
+    # Layer 3: Cross-reference (deterministic, no LLM)
     print("Layer 3: Cross-reference...", file=sys.stderr)
     report.crossref = crossref_skill(skill_dir, report.summarization)
     print(f"  Verdict: {report.crossref.verdict.value}", file=sys.stderr)
+    if report.crossref.undeclared_capabilities:
+        for cap in report.crossref.undeclared_capabilities:
+            print(f"    Undeclared: {cap}", file=sys.stderr)
 
     if report.crossref.verdict == AnalysisVerdict.FAIL:
         print("  Short-circuiting: cross-reference failed.", file=sys.stderr)
@@ -233,8 +261,14 @@ def cmd_analyze(args: argparse.Namespace) -> None:
 
     # Layer 4: Sandbox
     print("Layer 4: Honeypot sandbox...", file=sys.stderr)
-    report.sandbox = sandbox_skill(skill_dir, model=args.model)
+    report.sandbox = sandbox_skill(skill_dir, client=client, model=args.model)
     print(f"  Verdict: {report.sandbox.verdict.value}", file=sys.stderr)
+    print(f"    Tool calls: {len(report.sandbox.tool_calls)}", file=sys.stderr)
+    print(f"    Canary leaked: {report.sandbox.canary_leaked}", file=sys.stderr)
+
+    # Print cost summary if using Claude backend
+    if hasattr(client, 'total_cost_usd'):
+        print(f"\n  Total LLM cost: ${client.total_cost_usd:.4f} ({client.call_count} calls)", file=sys.stderr)
 
     json.dump(json.loads(report.model_dump_json()), sys.stdout, indent=2)
     print()

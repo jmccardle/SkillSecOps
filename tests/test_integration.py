@@ -118,8 +118,8 @@ class TestInjectionCaughtAtLayer1:
 
 
 class TestEvasionPayloadsCaughtDeeper:
-    def test_subtle_role_shift_caught_at_layer2_or_3(self, tmp_skill_dir):
-        """Evasion payload passes Layer 1 but caught at Layer 2 or 3."""
+    def test_subtle_role_shift_caught_at_layer3(self, tmp_skill_dir):
+        """Evasion payload passes L1 and L2, caught at L3 cross-reference."""
         skill_dir = tmp_skill_dir(SUBTLE_ROLE_SHIFT.content)
 
         # The inspector LLM accurately summarizes the content
@@ -138,7 +138,12 @@ class TestEvasionPayloadsCaughtDeeper:
         # Should pass Layer 1
         assert report.static is not None
         assert report.static.verdict == AnalysisVerdict.PASS
-        # Should fail at Layer 2 (instructions_to_agent) or Layer 3 (undeclared capabilities)
+        # Layer 2 passes (decompiler, not judge) but flags instructions
+        assert report.summarization is not None
+        assert report.summarization.verdict == AnalysisVerdict.PASS
+        # Layer 3 catches the mismatch
+        assert report.crossref is not None
+        assert report.crossref.verdict == AnalysisVerdict.FAIL
         assert report.overall_verdict == AnalysisVerdict.FAIL
 
     def test_split_injection_caught_at_layer3(self, tmp_skill_dir):
