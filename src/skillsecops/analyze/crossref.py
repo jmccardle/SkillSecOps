@@ -213,10 +213,12 @@ def _find_undeclared_capabilities(
     # Only flag instructions that reference security-relevant actions
     # not covered by the description.
     _SUSPICIOUS_INSTRUCTION_KEYWORDS = {
-        "ignore", "override", "disregard", "forget",  # prompt injection
-        "api_key", "api key", "secret", "password", "credential", "token",  # credential access
-        "exfiltrate", "send to", "phone home", "report to",  # data exfiltration
-        ".env", "environment variable",  # credential file access
+        "ignore previous", "ignore all", "ignore instructions",  # prompt injection (narrowed)
+        "override previous", "override instructions", "override system",
+        "disregard", "forget everything",
+        "api_key", "api key", "secret key", "password", "credential",  # credential access
+        "exfiltrate", "phone home", "report to",  # data exfiltration
+        ".env file", "environment variable",  # credential file access
     }
 
     for chunk in summaries:
@@ -288,7 +290,7 @@ def crossref_skill(
     overlap = _compute_keyword_overlap(description, chunks)
     mismatches: list[str] = []
 
-    if overlap < 0.1 and chunks:
+    if overlap < 0.05 and chunks:
         mismatches.append(
             f"Very low keyword overlap ({overlap:.3f}) between declared "
             f"description and actual content summaries — skill may do "
